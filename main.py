@@ -6,26 +6,99 @@ import json
 import ast
 from datetime import datetime, time
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
+
+import os
+import psycopg2
+from psycopg2.pool import SimpleConnectionPool
+
+# pega do .env
+PGHOST = os.getenv("PGHOST")
+PGPORT = int(os.getenv("PGPORT", "5432"))
+PGDB   = os.getenv("PGDATABASE")
+PGUSER = os.getenv("PGUSER")
+PGPASS = os.getenv("PGPASSWORD")
+
+pool = SimpleConnectionPool(1, 5,
+    host=PGHOST, port=PGPORT, dbname=PGDB, user=PGUSER, password=PGPASS
+)
+
+def _conn():
+    return pool.getconn()
+
+def _free(c):
+    pool.putconn(c)
 
 ARDUINO_IP = ""
 
-uri = "mongodb+srv://rrddamazio:vQ4lM2M1zErxlIFY@bdprojfinalmic.rgwiall.mongodb.net/?retryWrites=true&w=majority&appName=bdProjFinalMic"
-cliente = MongoClient(uri, 27017)
-'''
-try:
-    cliente = MongoClient(uri, 27017)
-    banco = cliente["banco_proj_final"]
-    colecaoBandejao = banco["bandejao"]
-    print("Conexão estabelecida com sucesso.")
-    for doc in colecaoBandejao.find():
-        print(doc)
-except Exception as e:
-    print(f"Erro ao conectar com MongoDB: {e}")
-'''
+def lista_pessoas():
+    c = _conn()
+    try:
+        with c.cursor() as cur:
+            cur.execute("""SELECT nome, cpf, saldo
+                           FROM base_bandejao
+                           ORDER BY created_at DESC, id DESC""")
+            return [
+                {"nome": r[0], "cpf": r[1], "saldo": r[2]}
+                for r in cur.fetchall()
+            ]
+    finally:
+        _free(c)
 
-banco = cliente["banco_proj_IOT"]
+def busca_por_cpf(cpf):
+    c = _conn()
+    try:
+        with c.cursor() as cur:
+            cur.execute("""SELECT nome, saldo, senha, chat_id, rfid
+                           FROM base_bandejao WHERE cpf=%s""", (cpf,))
+            r = cur.fetchone()
+            if not r: return None
+            return {"nome": r[0], "saldo": r[1], "chatId": r[3], "rfid": r[4]}
+    finally:
+        _free(c)
 
-colecaoBandejao = banco["bandejao"]
+def existe_cpf(cpf):
+    c = _conn()
+    try:
+        with c.cursor() as cur:
+            cur.execute("SELECT 1 FROM base_bandejao WHERE cpf=%s", (cpf,))
+            return cur.fetchone() is not None
+    finally:
+        _free(c)
+
+def insere_pessoa(nome, cpf, saldo, chatId, rfid):
+    c = _conn()
+    try:
+        with c.cursor() as cur:
+            cur.execute("""INSERT INTO base_bandejao (nome, cpf, saldo, chat_id, rfid)
+                           VALUES (%s,%s,%s, %s, %s)""",
+                        (nome, cpf, int(saldo or 0), chatId, rfid))
+        c.commit()
+    finally:
+        _free(c)
+
+def atualiza_pessoa(cpf, nome, saldo, chatId, rfid):
+    c = _conn()
+    try:
+        with c.cursor() as cur:
+            cur.execute("""UPDATE base_bandejao
+                           SET nome=%s, saldo=%s, chat_id=%s, rfid=%s
+                           WHERE cpf=%s""",
+                        (nome, int(saldo or 0), chatId, rfid, cpf))
+        c.commit()
+    finally:
+        _free(c)
+
+def exclui_por_cpf(cpf):
+    c = _conn()
+    try:
+        with c.cursor() as cur:
+            cur.execute("DELETE FROM base_bandejao WHERE cpf=%s", (cpf,))
+        c.commit()
+    finally:
+        _free(c)
 
 UPLOAD_FOLDER = 'static/uploads'
 if not os.path.exists(UPLOAD_FOLDER):
@@ -41,11 +114,7 @@ print(app.config)
 @app.route("/", methods = ["GET", "POST"]) #mudado
 @app.route("/index.html", methods = ["GET", "POST"])
 def menu():    
-    lPessoas = []
-        
-    for aluno in colecaoBandejao.find():
-        lPessoas.append(aluno)
-    
+    lPessoas = lista_pessoas()    
     return render_template("index.html", lPessoas = lPessoas)
 
 @app.route("/favicon.ico", methods = ["GET", "POST"]) #mudado
@@ -60,48 +129,50 @@ def cadastra():
         nome = request.form.get("fNome")
         cpf = request.form.get("fcpf")
         saldo = request.form.get("fsaldo")
-        senha = request.form.get("fsenha")
+        chatId = request.form.get("fchatId")
+        rfid = request.form.get("frfid")
         #foto = request.files.get("fFoto")
 
-        ind = colecaoBandejao.find_one({"cpf" : cpf})
-        print(ind)
-        print(type(ind))
-
-        if ind != None:           
+        if existe_cpf(cpf):           
             lCadastro[0] = nome
             lCadastro[1] = cpf
             lCadastro[2] = saldo
-            lCadastro[3] = senha
+            lCadastro[3] = chatId
+            lCadastro[4] = rfid
             return render_template("cadastramento.html", error = True, lCadastro = lCadastro)
         
         else:
-            colecaoBandejao.insert_one({"nome":nome, "cpf" : cpf, "saldo" : saldo, "senha" : senha, "uid" : ""})
+            insere_pessoa(nome, cpf, saldo, chatId, rfid)
         return redirect(url_for("menu"))
     else:
         return render_template("cadastramento.html", lCadastro = lCadastro)
     
 @app.route("/exclui/<num>.html", methods = ["GET", "POST"]) #mudado
 def exclui(num):  
-    colecaoBandejao.delete_one({"cpf" : num})
+    exclui_por_cpf(num)
     return redirect(url_for("menu"))
     
 @app.route("/edita/<num>.html", methods = ["GET", "POST"]) #mudado
 def edita(num):
     print("entrei na edita")
     print(num)
-    aluno = colecaoBandejao.find_one({"cpf" : num})
-    print(aluno)
-    lEdita = ["", "", ""]
-    lEdita[0] = aluno["nome"]
-    lEdita[1] = aluno["saldo"]
+    pessoa = busca_por_cpf(num)
+    print(pessoa)
+    lEdita = ["", "", "", ""]
+    lEdita[0] = pessoa["nome"]
+    lEdita[1] = pessoa["saldo"]
+    lEdita[1] = pessoa["chatId"]
+    lEdita[1] = pessoa["rfid"]
     print(lEdita[0])
 
     if request.method == "POST":
         nome = request.form.get("fNome")
         saldo = request.form.get("fsaldo")
+        chatId = request.form.get("fchatId")
+        rfid = request.form.get("frfid")
         
-        print({"cpf" : num}, {"nome": nome, "saldo" : saldo})
-        colecaoBandejao.update_one({"cpf" : num}, {"$set":{"nome": nome, "saldo" : saldo}})
+        print({"cpf" : num}, {"nome": nome, "saldo" : saldo, "chatId": chatId, "rfid": rfid})
+        atualiza_pessoa(num, nome, saldo, chatId, rfid)
         print("dentro")
         return redirect(url_for("menu"))
     #return redirect(url_for("edita", lEdita = lEdita, num = num, turma = turma))
