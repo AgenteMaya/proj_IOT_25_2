@@ -7,12 +7,48 @@ import ast
 from datetime import datetime, time
 import requests
 from dotenv import load_dotenv
+import paho.mqtt.client as mqtt
+import threading
+
+rfid_event = threading.Event()
+rfid_valor = ""
 
 load_dotenv()
 
 import os
 import psycopg2
 from psycopg2.pool import SimpleConnectionPool
+
+BROKER = "mqtt.janks.dev.br"     
+PORT   = 8883              
+
+client = mqtt.Client(client_id="python-publisher")
+
+client.username_pw_set("aula", "zowmad-tavQez")
+
+client.connect(BROKER, PORT, keepalive=60)
+
+def on_connect(client, userdata, flags, rc):
+    print("Conectado com código:", rc)
+    client.subscribe("rfidCadastro")  # assina o tópico ao conectar
+
+def on_message(client, userdata, msg):
+    global rfid_valor
+    print("Chegou mensagem no tópico:", msg.topic)
+    payload = msg.payload.decode("utf-8")
+    print("Payload bruto:", payload)
+    if msg.topic == "rfidCadastro" and payload.startswith('{"r'):
+        try:
+            data = json.loads(payload)
+            rfid_valor = data.get("rfid")
+            print("RFID:", rfid_valor)
+            rfid_event.set()
+        except json.JSONDecodeError:
+            print("Payload não é JSON válido")
+
+client.tls_set()  
+client.on_connect = on_connect
+client.on_message = on_message
 
 # pega do .env
 PGHOST = os.getenv("PGHOST")
@@ -109,13 +145,26 @@ app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024 #limite de 16mb
 print(app.config)
-# nome, cpf, curso, foto            
 
 @app.route("/", methods = ["GET", "POST"]) #mudado
 @app.route("/index.html", methods = ["GET", "POST"])
 def menu():    
     lPessoas = lista_pessoas()    
     return render_template("index.html", lPessoas = lPessoas)
+
+@app.route("/pedeRfid", methods = ["POST"])
+def pedeRfid():    
+    global rfid_valor
+    rfid_valor = None
+    rfid_event.clear()
+
+    retorno = client.publish("rfidCadastro", "ler", qos=0, retain=False)
+    print("Publicou com retorno:", retorno)
+    if not rfid_event.wait(timeout=120):
+        return jsonify({"ok": False, "erro": "timeout"}), 504
+    print("Evento de RFID recebido")
+    return jsonify({"ok": True, "rfid": rfid_valor})
+    #return render_template("cadastramento.html", lCadastro = lCadastro)
 
 @app.route("/favicon.ico", methods = ["GET", "POST"]) #mudado
 @app.route("/index/favicon.ico.html", methods = ["GET", "POST"])
@@ -124,7 +173,7 @@ def favico():
 
 @app.route("/cadastramento.html", methods = ["GET", "POST"]) #mudado
 def cadastra():
-    lCadastro = ["", "", "", ""]
+    lCadastro = ['', '', '', '', '']  # nome, cpf, saldo, chatId, rfid
     if request.method == "POST":
         nome = request.form.get("fNome")
         cpf = request.form.get("fcpf")
@@ -142,7 +191,7 @@ def cadastra():
             return render_template("cadastramento.html", error = True, lCadastro = lCadastro)
         
         else:
-            insere_pessoa(nome, cpf, saldo, chatId, rfid)
+            insere_pessoa(nome, cpf, saldo, chatId, rfid)            
         return redirect(url_for("menu"))
     else:
         return render_template("cadastramento.html", lCadastro = lCadastro)
@@ -161,8 +210,8 @@ def edita(num):
     lEdita = ["", "", "", ""]
     lEdita[0] = pessoa["nome"]
     lEdita[1] = pessoa["saldo"]
-    lEdita[1] = pessoa["chatId"]
-    lEdita[1] = pessoa["rfid"]
+    lEdita[2] = pessoa["chatId"]
+    lEdita[3] = pessoa["rfid"]
     print(lEdita[0])
 
     if request.method == "POST":
@@ -180,4 +229,6 @@ def edita(num):
     return render_template("edita.html", lEdita = lEdita, num = num)
 
 #if __name__ == '__main__':
+
+client.loop_start()
 app.run(port=5002, debug=False)

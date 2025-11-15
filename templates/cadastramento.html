@@ -40,25 +40,59 @@
                                 <input id = "chatID" type = "text" name = "fchatId" value = "{{lCadastro[3]}}" placeholder="chatID da pessoa">
                             </div>
 
-                            <div id = "d_rfid">
-                                <label for= "rfid">rfid: </label>
-                                <input id = "rfid" type = "text" name = "frfid" value = "{{lCadastro[4]}}" placeholder="rfid da pessoa">
-                            </div> 
-
-                           <!--  <div id = "d_photo">
-                                <label for = "foto"> Foto estudante: </label>
-                                <input id = "foto" type = "file" name = "fFoto" accept="image/*" >
-                            </div> -->
+                            <div id="d_rfid">
+                                <label for="rfid">rfid: </label>
+                                <input id="rfid" type="text" name="frfid" value="{{ lCadastro[4] }}" placeholder="rfid da pessoa">
+                                <button id="btnRfid" type="button" onclick = "lerRfid()">Pegar RFID</button>
+                                <span id="statusRfid"></span>
+                            </div>
 
                             <a href = "{{url_for('menu', turma = turma)}}">
                                 <button id = "btnEnviar" type="submit">Cadastrar</button>
                             </a>
+
                         </div>
                     </fieldset>
                 </div>
             </form>
             <a href = "/{{turma}}"><button id = "btnVoltar">Voltar</button></a>
-        </div>                           
+        </div>           
+        <script>
+            async function lerRfid() {
+            const btn = document.getElementById("btnRfid");
+            const campo = document.getElementById("rfid");
+
+            btn.disabled = true;
+            const textoOriginal = btn.textContent;
+            btn.textContent = "Lendo...";
+
+            try {
+                const resp = await fetch("/pedeRfid", {
+                method: "POST",
+                headers: {
+                    "X-Requested-With": "XMLHttpRequest"
+                }
+                });
+                console.log("Resposta recebida:");
+                console.log(resp)
+                const data = await resp.json();
+
+                if (data.ok) 
+                {
+                    campo.value = data.rfid;  
+                } 
+                else {
+                    alert("Erro ao ler RFID: " + (data.erro || "desconhecido"));
+                }
+            } catch (e) {
+                console.error(e);
+                alert("Falha ao falar com o servidor.");
+            } finally {
+                btn.disabled = false;
+                btn.textContent = textoOriginal;
+            }
+            }
+            </script>                
     </body>
 
 </html>

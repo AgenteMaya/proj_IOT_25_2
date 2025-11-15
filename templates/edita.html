@@ -42,9 +42,11 @@
                                 <label for= "chatID">chatID: </label>
                                 <input id = "chatID" type = "text" name = "fchatId"  value = "{{lEdita[2]}}" placeholder="Chat Id da pessoa">
                             </div>  
-                            <div id = "d_rfid">
-                                <label for= "rfid">rfid: </label>
-                                <input id = "rfid" type = "text" name = "frfid"  value = "{{lEdita[3]}}" placeholder="Rfid da pessoa">
+                            <div id="d_rfid">
+                                <label for="rfid">rfid: </label>
+                                <input id="rfid" type="text" name="frfid" value="{{ lEdita[3] }}" placeholder="rfid da pessoa">
+                                <button id="btnRfid" type="button" onclick = "lerRfid()">Pegar RFID</button>
+                                <span id="statusRfid"></span>
                             </div>  
                             
                             <!-- <div id = "d_photo">
@@ -57,7 +59,43 @@
                 </div>
             </form>
             <a href = "/"><button id = "btnVoltar">Voltar</button></a>
-        </div>                           
+        </div>   
+        <script>
+            async function lerRfid() {
+            const btn = document.getElementById("btnRfid");
+            const campo = document.getElementById("rfid");
+
+            btn.disabled = true;
+            const textoOriginal = btn.textContent;
+            btn.textContent = "Lendo...";
+
+            try {
+                const resp = await fetch("/pedeRfid", {
+                method: "POST",
+                headers: {
+                    "X-Requested-With": "XMLHttpRequest"
+                }
+                });
+                console.log("Resposta recebida:");
+                console.log(resp)
+                const data = await resp.json();
+
+                if (data.ok) 
+                {
+                    campo.value = data.rfid;  
+                } 
+                else {
+                    alert("Erro ao ler RFID: " + (data.erro || "desconhecido"));
+                }
+            } catch (e) {
+                console.error(e);
+                alert("Falha ao falar com o servidor.");
+            } finally {
+                btn.disabled = false;
+                btn.textContent = textoOriginal;
+            }
+            }
+        </script>                         
     </body>
 
 </html>
